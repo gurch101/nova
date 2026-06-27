@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -94,13 +95,17 @@ func decodeRequest[Req any](r *http.Request, plan *decoderPlan) (req Req, err er
 		}
 	}
 
+	var query url.Values
 	for _, fi := range plan.fields {
 		var raw string
 		switch fi.source {
 		case "path":
 			raw = r.PathValue(fi.name)
 		case "query":
-			raw = r.URL.Query().Get(fi.name)
+			if query == nil {
+				query = r.URL.Query()
+			}
+			raw = query.Get(fi.name)
 		}
 		if raw == "" {
 			continue
