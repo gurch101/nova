@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -117,7 +117,7 @@ func Recoverer(next http.Handler) http.Handler {
 func generateRequestID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	return hex.EncodeToString(b)
 }
 
 type statusRecorder struct {
