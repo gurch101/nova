@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -256,9 +257,9 @@ func writeJSON(w http.ResponseWriter, status int, v any, ctx context.Context) {
 // writeError sends an RFC 9457 ProblemDetail as JSON.
 // If the error is not a ProblemDetail it falls back to a generic 500.
 func writeError(w http.ResponseWriter, err error, ctx context.Context) {
-	pd, ok := err.(ProblemDetail)
+	var pd ProblemDetail
 	requestID, _ := ctx.Value(requestIDKey).(string)
-	if !ok {
+	if !errors.As(err, &pd) {
 		slog.LogAttrs(ctx, slog.LevelError, "unhandled error",
 			slog.String("request_id", requestID),
 			slog.Any("error", err),
