@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -54,6 +55,10 @@ func (e Envelope[T]) GetData() any     { return e.Data }
 type empty struct{}
 
 var Empty empty
+
+var contextPool = sync.Pool{
+	New: func() any { return &Context{} },
+}
 
 type Application struct {
 	mux        *http.ServeMux
@@ -226,11 +231,18 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 		}
 
 		requestID, _ := r.Context().Value(requestIDKey).(string)
-		ctx := &Context{
-			Request:   r,
-			Response:  w,
-			RequestID: requestID,
-		}
+		ctx := contextPool.Get().(*Context)
+		ctx.Request = r
+		ctx.Response = w
+		ctx.RequestID = requestID
+		defer func() {
+			ctx.Request = nil
+			ctx.Response = nil
+			ctx.Payload = nil
+			ctx.RequestID = ""
+			ctx.logger = nil
+			contextPool.Put(ctx)
+		}()
 
 		res, err := handler(ctx, req)
 		if err != nil {
