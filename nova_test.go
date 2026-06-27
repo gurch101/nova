@@ -624,6 +624,24 @@ func TestHandleFunc(t *testing.T) {
 	assert.Equal(t, string(body), "data")
 }
 
+func TestEmbeddedPointerStructPanics(t *testing.T) {
+	type Base struct {
+		ID int `path:"id"`
+	}
+	type BadRequest struct {
+		*Base
+		Name string `json:"name"`
+	}
+	type Res struct{}
+
+	app := nova.NewApplication()
+	assert.Panics(t, func() {
+		nova.Get(app, "/items/{id}", func(ctx *nova.Context, req BadRequest) (Res, error) {
+			return Res{}, nil
+		})
+	})
+}
+
 func TestHandleMethodNotAllowed(t *testing.T) {
 	app := nova.NewApplication()
 	app.Handle("POST", "/only-post", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
