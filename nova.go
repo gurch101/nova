@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -184,8 +185,11 @@ func init() {
 }
 
 func generateRequestID() string {
-	n := requestIDCounter.Add(1)
-	return requestIDPrefix + strconv.FormatUint(n, 36)
+	var b strings.Builder
+	b.Grow(len(requestIDPrefix) + 12)
+	b.WriteString(requestIDPrefix)
+	b.WriteString(strconv.FormatUint(requestIDCounter.Add(1), 36))
+	return b.String()
 }
 
 type statusRecorder struct {
