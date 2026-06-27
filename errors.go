@@ -2,6 +2,10 @@ package nova
 
 import "net/http"
 
+// ErrorTypeURLPrefix is the base URL used for ProblemDetail type fields.
+// Change this at startup to match your API's error documentation domain.
+var ErrorTypeURLPrefix = "https://api.yourdomain.com/errors"
+
 type FieldViolation struct {
 	Field  string `json:"field"`
 	Reason string `json:"reason"`
@@ -27,7 +31,7 @@ func (p ProblemDetail) StatusCode() int {
 
 func NewBadRequestProblem(detail string) ProblemDetail {
 	return ProblemDetail{
-		Type:   "https://api.yourdomain.com/errors/bad-request",
+		Type:   ErrorTypeURLPrefix + "/bad-request",
 		Title:  "Bad Request",
 		Status: http.StatusBadRequest,
 		Detail: detail,
@@ -36,7 +40,7 @@ func NewBadRequestProblem(detail string) ProblemDetail {
 
 func NewNotFoundProblem(detail string, instance string) ProblemDetail {
 	return ProblemDetail{
-		Type:     "https://api.yourdomain.com/errors/not-found",
+		Type:     ErrorTypeURLPrefix + "/not-found",
 		Title:    "Resource Not Found",
 		Status:   http.StatusNotFound,
 		Detail:   detail,
@@ -46,7 +50,7 @@ func NewNotFoundProblem(detail string, instance string) ProblemDetail {
 
 func NewUnprocessableEntityProblem(detail string) ProblemDetail {
 	return ProblemDetail{
-		Type:   "https://api.yourdomain.com/errors/unprocessable-entity",
+		Type:   ErrorTypeURLPrefix + "/unprocessable-entity",
 		Title:  "Unprocessable Entity",
 		Status: http.StatusUnprocessableEntity,
 		Detail: detail,
@@ -55,7 +59,7 @@ func NewUnprocessableEntityProblem(detail string) ProblemDetail {
 
 func NewMethodNotAllowedProblem(detail string) ProblemDetail {
 	return ProblemDetail{
-		Type:   "https://api.yourdomain.com/errors/method-not-allowed",
+		Type:   ErrorTypeURLPrefix + "/method-not-allowed",
 		Title:  "Method Not Allowed",
 		Status: http.StatusMethodNotAllowed,
 		Detail: detail,
@@ -64,7 +68,7 @@ func NewMethodNotAllowedProblem(detail string) ProblemDetail {
 
 func NewSingleFieldProblem(field, reason, code string) error {
 	return ProblemDetail{
-		Type:   "https://api.yourdomain.com/errors/unprocessable-entity",
+		Type:   ErrorTypeURLPrefix + "/unprocessable-entity",
 		Title:  "Unprocessable Entity",
 		Status: http.StatusUnprocessableEntity,
 		Detail: "The request payload failed validation.",
@@ -99,7 +103,7 @@ func (v *Validator) ErrorOrNil() error {
 		return nil
 	}
 	return ProblemDetail{
-		Type:    "https://api.yourdomain.com/errors/unprocessable-entity",
+		Type:    ErrorTypeURLPrefix + "/unprocessable-entity",
 		Title:   "Unprocessable Entity",
 		Status:  http.StatusUnprocessableEntity,
 		Detail:  "The request payload failed validation.",
