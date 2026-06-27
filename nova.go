@@ -134,7 +134,7 @@ func Recoverer(next http.Handler) http.Handler {
 				}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
 				writeError(w, ProblemDetail{
-					Type:   "https://api.yourdomain.com/errors/internal-server-error",
+					Type:   ErrorTypeURLPrefix + "/internal-server-error",
 					Title:  "Internal Server Error",
 					Status: http.StatusInternalServerError,
 					Detail: "An unexpected error occurred",
@@ -349,7 +349,7 @@ func writeError(w http.ResponseWriter, err error, ctx context.Context) {
 			slog.Any("error", err),
 		)
 		pd = ProblemDetail{
-			Type:   "https://api.yourdomain.com/errors/internal-server-error",
+			Type:   ErrorTypeURLPrefix + "/internal-server-error",
 			Title:  "Internal Server Error",
 			Status: http.StatusInternalServerError,
 			Detail: "An unexpected error occurred",
