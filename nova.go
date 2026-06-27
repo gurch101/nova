@@ -68,14 +68,6 @@ type Application struct {
 
 func NewApplication() *Application {
 	mux := http.NewServeMux()
-
-	// Catch-all for unmatched routes — returns an RFC 9457 ProblemDetail 404
-	// instead of the default plain-text response. Specific registered patterns
-	// take precedence because they are more specific than {path...}.
-	mux.HandleFunc("/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
-	})
-
 	app := &Application{mux: mux, handler: mux}
 	app.Use(RequestLogger)
 	app.Use(Recoverer)
@@ -83,7 +75,23 @@ func NewApplication() *Application {
 }
 
 func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.handler.ServeHTTP(w, r)
+	ec := &errorCapturer{ResponseWriter: w}
+	a.handler.ServeHTTP(ec, r)
+
+	ct := w.Header().Get("Content-Type")
+	isMuxText := ct == "" || ct == "text/plain; charset=utf-8"
+
+	if ec.code == http.StatusNotFound && isMuxText {
+		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
+		return
+	}
+	if ec.code == http.StatusMethodNotAllowed && isMuxText {
+		pd := NewMethodNotAllowedProblem("The requested HTTP method is not supported for this endpoint")
+		if allow := w.Header().Get("Allow"); allow != "" {
+			w.Header().Set("Allow", allow)
+		}
+		writeError(w, pd, r.Context())
+	}
 }
 
 // Use adds a middleware to the application. Middleware is applied in the order
@@ -150,6 +158,42 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.statusCode = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// errorCapturer buffers the response body only when the status code is 404
+// or 405 and Content-Type is empty or the mux's default text/plain,
+// allowing ServeHTTP to replace mux-generated text error responses
+// with RFC 9457 ProblemDetail JSON without buffering successful responses.
+type errorCapturer struct {
+	http.ResponseWriter
+	code int
+	buf  bytes.Buffer
+}
+
+func (w *errorCapturer) WriteHeader(code int) {
+	w.code = code
+	if w.isMuxError() {
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *errorCapturer) Write(p []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	if w.isMuxError() {
+		return w.buf.Write(p)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *errorCapturer) isMuxError() bool {
+	if w.code != http.StatusNotFound && w.code != http.StatusMethodNotAllowed {
+		return false
+	}
+	ct := w.Header().Get("Content-Type")
+	return ct == "" || ct == "text/plain; charset=utf-8"
 }
 
 func clientIP(r *http.Request) string {

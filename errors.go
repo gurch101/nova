@@ -53,6 +53,15 @@ func NewUnprocessableEntityProblem(detail string) ProblemDetail {
 	}
 }
 
+func NewMethodNotAllowedProblem(detail string) ProblemDetail {
+	return ProblemDetail{
+		Type:   "https://api.yourdomain.com/errors/method-not-allowed",
+		Title:  "Method Not Allowed",
+		Status: http.StatusMethodNotAllowed,
+		Detail: detail,
+	}
+}
+
 func NewSingleFieldProblem(field, reason, code string) error {
 	return ProblemDetail{
 		Type:   "https://api.yourdomain.com/errors/unprocessable-entity",
