@@ -510,6 +510,47 @@ func TestPanicRecovery(t *testing.T) {
 	assert.Equal(t, pd.Detail, "An unexpected error occurred")
 }
 
+func TestEmbeddedStructDecode(t *testing.T) {
+	type PathQuery struct {
+		ID     int    `path:"id"`
+		SortBy string `query:"sort"`
+	}
+
+	type EmbeddedRequest struct {
+		PathQuery
+		Name string `json:"name"`
+	}
+
+	type EmbeddedResponse struct {
+		ID     int    `json:"id"`
+		SortBy string `json:"sortBy"`
+		Name   string `json:"name"`
+	}
+
+	app := nova.NewApplication()
+	nova.Put(app, "/resources/{id}", func(ctx *nova.Context, req EmbeddedRequest) (EmbeddedResponse, error) {
+		return EmbeddedResponse{ID: req.ID, SortBy: req.SortBy, Name: req.Name}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	body := `{"name":"test-resource"}`
+	req, _ := http.NewRequest("PUT", server.URL+"/resources/99?sort=name", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+	var result EmbeddedResponse
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, result.ID, 99)
+	assert.Equal(t, result.SortBy, "name")
+	assert.Equal(t, result.Name, "test-resource")
+}
+
 func TestValueResponseReturns200(t *testing.T) {
 	type Req struct{}
 	type Res struct {
