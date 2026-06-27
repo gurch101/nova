@@ -20,8 +20,9 @@ import (
 type contextKey string
 
 const (
-	requestIDKey contextKey = "request_id"
-	bodyKey      contextKey = "request_body"
+	requestIDKey   contextKey = "request_id"
+	bodyKey        contextKey = "request_body"
+	maxBodyCapture           = 64 * 1024
 )
 
 type bodyCapturer struct {
@@ -30,6 +31,32 @@ type bodyCapturer struct {
 }
 
 func (b *bodyCapturer) Close() error { return b.body.Close() }
+
+// cappedBuffer wraps bytes.Buffer with a write limit for body capture.
+// Excess writes are silently discarded to prevent unbounded memory growth
+// from large request bodies.
+type cappedBuffer struct {
+	bytes.Buffer
+	capped bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.capped {
+		return len(p), nil
+	}
+	remaining := maxBodyCapture - b.Buffer.Len()
+	if remaining <= 0 {
+		b.capped = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.Buffer.Write(p[:remaining])
+		b.capped = true
+	} else {
+		b.Buffer.Write(p)
+	}
+	return len(p), nil
+}
 
 // Middleware is a function that wraps an http.Handler, returning a new handler
 // that may perform pre- or post-processing around the wrapped handler.
@@ -129,7 +156,7 @@ func Recoverer(next http.Handler) http.Handler {
 					slog.Any("panic", rec),
 					slog.String("stack", string(stack)),
 				}
-				if bp, ok := r.Context().Value(bodyKey).(*bytes.Buffer); ok && bp.Len() > 0 {
+				if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
 					attrs = append(attrs, slog.String("body", bp.String()))
 				}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
@@ -245,7 +272,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		start := time.Now()
 		requestID := generateRequestID()
 
-		var buf bytes.Buffer
+		var buf cappedBuffer
 		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
 			r.Body = &bodyCapturer{
 				Reader: io.TeeReader(r.Body, &buf),
