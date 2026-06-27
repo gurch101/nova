@@ -39,12 +39,14 @@ type Envelope[T any] struct {
 }
 
 type envelope interface {
+	envelopeMarker()
 	GetStatus() int
 	GetData() any
 }
 
-func (e Envelope[T]) GetStatus() int { return e.Status }
-func (e Envelope[T]) GetData() any   { return e.Data }
+func (e Envelope[T]) envelopeMarker() {}
+func (e Envelope[T]) GetStatus() int   { return e.Status }
+func (e Envelope[T]) GetData() any     { return e.Data }
 
 // Empty is a sentinel value handlers return to signal 204 No Content.
 type empty struct{}
