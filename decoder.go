@@ -11,6 +11,8 @@ import (
 	"unsafe"
 )
 
+var errPointerEmbed = "nova: embedded pointer field %s in %s is not supported; use value embedding"
+
 type fieldInfo struct {
 	offset uintptr
 	source string
@@ -47,7 +49,7 @@ func collectFields(t reflect.Type, baseOffset uintptr, plan *decoderPlan) {
 		if f.Anonymous {
 			ft := f.Type
 			if ft.Kind() == reflect.Ptr {
-				ft = ft.Elem()
+				panic(fmt.Sprintf(errPointerEmbed, f.Name, t))
 			}
 			collectFields(ft, absOffset, plan)
 			continue

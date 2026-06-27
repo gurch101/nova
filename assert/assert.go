@@ -74,6 +74,16 @@ func NoError(t *testing.T, err error) {
 	}
 }
 
+func Panics(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected panic but none occurred")
+		}
+	}()
+	fn()
+}
+
 func MatchesRegexp(t *testing.T, got, pattern string) {
 	t.Helper()
 	matched, err := regexp.MatchString(pattern, got)
