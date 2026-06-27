@@ -272,15 +272,18 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any, ctx context.Context) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+	data, err := json.Marshal(v)
+	if err != nil {
 		requestID, _ := ctx.Value(requestIDKey).(string)
 		slog.LogAttrs(ctx, slog.LevelWarn, "failed to encode response",
 			slog.String("request_id", requestID),
 			slog.Any("error", err),
 		)
+		data = []byte("null")
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(data)
 }
 
 // writeError sends an RFC 9457 ProblemDetail as JSON.
@@ -301,14 +304,17 @@ func writeError(w http.ResponseWriter, err error, ctx context.Context) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(pd.Status)
-	if encodeErr := json.NewEncoder(w).Encode(pd); encodeErr != nil {
+	data, encodeErr := json.Marshal(pd)
+	if encodeErr != nil {
 		slog.LogAttrs(ctx, slog.LevelError, "failed to encode error response",
 			slog.String("request_id", requestID),
 			slog.Any("error", encodeErr),
 		)
+		data = []byte("{}")
 	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(pd.Status)
+	w.Write(data)
 }
 
 
