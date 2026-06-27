@@ -352,6 +352,56 @@ func TestEmptyResponseReturns204(t *testing.T) {
 	assert.Equal(t, resp.ContentLength, int64(0))
 }
 
+func TestEnvelopeWithCustomStatus(t *testing.T) {
+	type CreateResp struct {
+		ID int `json:"id"`
+	}
+
+	app := nova.NewApplication()
+	nova.Post(app, "/users", func(ctx *nova.Context, req struct{}) (nova.Envelope[CreateResp], error) {
+		return nova.Envelope[CreateResp]{Status: http.StatusCreated, Data: CreateResp{ID: 1}}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/users", "application/json", nil)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusCreated)
+	assert.Equal(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var body CreateResp
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, body.ID, 1)
+}
+
+func TestEnvelopeDefaultsTo200WhenStatusIsZero(t *testing.T) {
+	type Data struct {
+		Msg string `json:"msg"`
+	}
+
+	app := nova.NewApplication()
+	nova.Get(app, "/data", func(ctx *nova.Context, req struct{}) (nova.Envelope[Data], error) {
+		return nova.Envelope[Data]{Data: Data{Msg: "ok"}}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/data")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	assert.Equal(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var body Data
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, body.Msg, "ok")
+}
+
 func TestValueResponseReturns200(t *testing.T) {
 	type Req struct{}
 	type Res struct {

@@ -6,6 +6,20 @@ import (
 	"net/http"
 )
 
+// Envelope wraps a response with a custom HTTP status code.
+type Envelope[T any] struct {
+	Status int
+	Data   T
+}
+
+type envelope interface {
+	GetStatus() int
+	GetData() any
+}
+
+func (e Envelope[T]) GetStatus() int { return e.Status }
+func (e Envelope[T]) GetData() any   { return e.Data }
+
 // Empty is a sentinel value handlers return to signal 204 No Content.
 type empty struct{}
 
@@ -82,12 +96,25 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(res); err != nil {
-			log.Printf("nova: failed to encode response: %v", err)
+		if env, ok := any(res).(envelope); ok {
+			status := env.GetStatus()
+			if status == 0 {
+				status = http.StatusOK
+			}
+			writeJSON(w, status, env.GetData())
+			return
 		}
+
+		writeJSON(w, http.StatusOK, res)
 	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("nova: failed to encode response: %v", err)
+	}
 }
 
 // writeError sends an RFC 9457 ProblemDetail as JSON.
