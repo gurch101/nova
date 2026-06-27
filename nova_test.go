@@ -1,8 +1,10 @@
 package nova_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -400,6 +402,112 @@ func TestEnvelopeDefaultsTo200WhenStatusIsZero(t *testing.T) {
 	var body Data
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, body.Msg, "ok")
+}
+
+func TestRequestIDIsSetOnContext(t *testing.T) {
+	type Req struct{}
+	type Res struct {
+		RequestID string `json:"requestId"`
+	}
+
+	app := nova.NewApplication()
+
+	nova.Get(app, "/echo-rid", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{RequestID: ctx.RequestID}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/echo-rid")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	var body Res
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.True(t, body.RequestID != "")
+}
+
+func TestRequestIDIsUniquePerRequest(t *testing.T) {
+	type Req struct{}
+	type Res struct {
+		RequestID string `json:"requestId"`
+	}
+
+	app := nova.NewApplication()
+
+	nova.Get(app, "/rid", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{RequestID: ctx.RequestID}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	getRID := func() string {
+		resp, _ := http.Get(server.URL + "/rid")
+		var body struct{ RequestID string }
+		json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		return body.RequestID
+	}
+
+	assert.NotEqual(t, getRID(), getRID())
+}
+
+func TestContextLoggerIncludesRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	orig := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(orig)
+
+	app := nova.NewApplication()
+
+	nova.Get(app, "/log-test", func(ctx *nova.Context, req struct{}) (struct{}, error) {
+		slog.Info("before")
+		ctx.Logger().Info("handler message")
+		slog.Info("after")
+		return struct{}{}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/log-test")
+	assert.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+
+	output := buf.String()
+	assert.True(t, strings.Contains(output, "handler message"))
+	assert.True(t, strings.Contains(output, "request_id="))
+}
+
+func TestPanicRecovery(t *testing.T) {
+	type Req struct{}
+	type Res struct{}
+
+	app := nova.NewApplication()
+
+	nova.Get(app, "/panic", func(ctx *nova.Context, req Req) (Res, error) {
+		panic("something went wrong")
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/panic")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusInternalServerError)
+	assert.Equal(t, resp.Header.Get("Content-Type"), "application/problem+json")
+
+	var pd nova.ProblemDetail
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&pd))
+	assert.Equal(t, pd.Status, http.StatusInternalServerError)
+	assert.Equal(t, pd.Title, "Internal Server Error")
+	assert.Equal(t, pd.Detail, "An unexpected error occurred")
 }
 
 func TestValueResponseReturns200(t *testing.T) {
