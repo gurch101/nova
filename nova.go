@@ -105,6 +105,17 @@ func (a *Application) Use(mw Middleware) {
 	a.handler = h
 }
 
+// Handle registers a standard http.Handler for the given method and pattern.
+// The method should be an HTTP method string (e.g., "GET", "POST") or "*" for any method.
+func (a *Application) Handle(method, pattern string, handler http.Handler) {
+	a.mux.Handle(method+" "+pattern, handler)
+}
+
+// HandleFunc registers a standard http.HandlerFunc for the given method and pattern.
+func (a *Application) HandleFunc(method, pattern string, handler func(w http.ResponseWriter, r *http.Request)) {
+	a.mux.HandleFunc(method+" "+pattern, handler)
+}
+
 // Recoverer is a middleware that recovers from panics, logs the stack trace,
 // and returns an HTTP 500 ProblemDetail response.
 func Recoverer(next http.Handler) http.Handler {

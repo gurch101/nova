@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -576,3 +577,66 @@ func TestValueResponseReturns200(t *testing.T) {
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Equal(t, body.Name, "world")
 }
+
+func TestHandle(t *testing.T) {
+	app := nova.NewApplication()
+	app.Handle("GET", "/hello", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("Hello"))
+	}))
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/hello")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	assert.Equal(t, resp.Header.Get("Content-Type"), "text/plain")
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, string(body), "Hello")
+}
+
+func TestHandleFunc(t *testing.T) {
+	app := nova.NewApplication()
+	app.HandleFunc("POST", "/echo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusCreated)
+		body, _ := io.ReadAll(r.Body)
+		w.Write(body)
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/echo", "text/plain", strings.NewReader("data"))
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusCreated)
+	assert.Equal(t, resp.Header.Get("Content-Type"), "application/octet-stream")
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, string(body), "data")
+}
+
+func TestHandleMethodNotAllowed(t *testing.T) {
+	app := nova.NewApplication()
+	app.Handle("POST", "/only-post", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/only-post")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, resp.StatusCode, http.StatusMethodNotAllowed)
+}
+
