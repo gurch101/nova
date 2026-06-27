@@ -35,13 +35,27 @@ func buildPlan[Req any]() *decoderPlan {
 	}
 
 	plan := &decoderPlan{}
+	collectFields(t, 0, plan)
+	return plan
+}
 
+func collectFields(t reflect.Type, baseOffset uintptr, plan *decoderPlan) {
 	for i := range t.NumField() {
 		f := t.Field(i)
+		absOffset := baseOffset + f.Offset
+
+		if f.Anonymous {
+			ft := f.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			collectFields(ft, absOffset, plan)
+			continue
+		}
 
 		if tag := f.Tag.Get("path"); tag != "" {
 			plan.fields = append(plan.fields, fieldInfo{
-				offset: f.Offset,
+				offset: absOffset,
 				source: "path",
 				name:   tag,
 				kind:   f.Type.Kind(),
@@ -50,7 +64,7 @@ func buildPlan[Req any]() *decoderPlan {
 
 		if tag := f.Tag.Get("query"); tag != "" {
 			plan.fields = append(plan.fields, fieldInfo{
-				offset: f.Offset,
+				offset: absOffset,
 				source: "query",
 				name:   tag,
 				kind:   f.Type.Kind(),
@@ -64,8 +78,6 @@ func buildPlan[Req any]() *decoderPlan {
 			}
 		}
 	}
-
-	return plan
 }
 
 // decodeRequest runs on every HTTP request but uses zero reflect.Value calls.
