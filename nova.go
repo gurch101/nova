@@ -177,8 +177,27 @@ func (r *statusRecorder) WriteHeader(code int) {
 // with RFC 9457 ProblemDetail JSON without buffering successful responses.
 type errorCapturer struct {
 	http.ResponseWriter
-	code int
-	buf  bytes.Buffer
+	code    int
+	buf     bytes.Buffer
+	handled bool // set true when a typed route handler starts execution
+}
+
+// markHandlerCapturer traverses known ResponseWriter wrappers to find and
+// mark the errorCapturer, indicating that a registered route handler is
+// executing so that intentional 404/405 responses are not replaced.
+func markHandlerCapturer(w http.ResponseWriter) {
+	for {
+		if ec, ok := w.(*errorCapturer); ok {
+			ec.handled = true
+			return
+		}
+		switch v := w.(type) {
+		case *statusRecorder:
+			w = v.ResponseWriter
+		default:
+			return
+		}
+	}
 }
 
 func (w *errorCapturer) WriteHeader(code int) {
@@ -200,7 +219,7 @@ func (w *errorCapturer) Write(p []byte) (int, error) {
 }
 
 func (w *errorCapturer) isMuxError() bool {
-	if w.code != http.StatusNotFound && w.code != http.StatusMethodNotAllowed {
+	if w.handled || (w.code != http.StatusNotFound && w.code != http.StatusMethodNotAllowed) {
 		return false
 	}
 	ct := w.Header().Get("Content-Type")
@@ -282,6 +301,8 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 
 	fullPattern := method + " " + pattern
 	app.mux.HandleFunc(fullPattern, func(w http.ResponseWriter, r *http.Request) {
+		markHandlerCapturer(w)
+
 		req, err := decodeRequest[Req](r, plan)
 		if err != nil {
 			writeError(w, NewBadRequestProblem(err.Error()), r.Context())
