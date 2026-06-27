@@ -356,21 +356,18 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 			return
 		}
 
-		if _, ok := any(res).(empty); ok {
+		switch v := any(res).(type) {
+		case empty:
 			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		if env, ok := any(res).(envelope); ok {
-			status := env.GetStatus()
+		case envelope:
+			status := v.GetStatus()
 			if status == 0 {
 				status = http.StatusOK
 			}
-			writeJSON(w, status, env.GetData(), r.Context())
-			return
+			writeJSON(w, status, v.GetData(), r.Context())
+		default:
+			writeJSON(w, http.StatusOK, v, r.Context())
 		}
-
-		writeJSON(w, http.StatusOK, res, r.Context())
 	})
 }
 
