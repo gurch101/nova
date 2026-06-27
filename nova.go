@@ -150,7 +150,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		requestID := generateRequestID()
 
 		var buf bytes.Buffer
-		if r.Body != nil {
+		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
 			r.Body = &bodyCapturer{
 				Reader: io.TeeReader(r.Body, &buf),
 				body:   r.Body,
