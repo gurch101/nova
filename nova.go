@@ -63,35 +63,38 @@ var contextPool = sync.Pool{
 type Application struct {
 	mux        *http.ServeMux
 	middleware []Middleware
+	handler    http.Handler
 }
 
 func NewApplication() *Application {
-	app := &Application{mux: http.NewServeMux()}
+	mux := http.NewServeMux()
 
 	// Catch-all for unmatched routes — returns an RFC 9457 ProblemDetail 404
 	// instead of the default plain-text response. Specific registered patterns
 	// take precedence because they are more specific than {path...}.
-	app.mux.HandleFunc("/{path...}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
 	})
 
+	app := &Application{mux: mux, handler: mux}
 	app.Use(RequestLogger)
 	app.Use(Recoverer)
 	return app
 }
 
 func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var h http.Handler = a.mux
-	for i := len(a.middleware) - 1; i >= 0; i-- {
-		h = a.middleware[i](h)
-	}
-	h.ServeHTTP(w, r)
+	a.handler.ServeHTTP(w, r)
 }
 
 // Use adds a middleware to the application. Middleware is applied in the order
 // it is added, so the first added middleware wraps the outermost layer.
 func (a *Application) Use(mw Middleware) {
 	a.middleware = append(a.middleware, mw)
+	h := http.Handler(a.mux)
+	for i := len(a.middleware) - 1; i >= 0; i-- {
+		h = a.middleware[i](h)
+	}
+	a.handler = h
 }
 
 // Recoverer is a middleware that recovers from panics, logs the stack trace,
