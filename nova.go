@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -116,10 +118,20 @@ func Recoverer(next http.Handler) http.Handler {
 	})
 }
 
-func generateRequestID() string {
-	b := make([]byte, 16)
+var (
+	requestIDPrefix  string
+	requestIDCounter atomic.Uint64
+)
+
+func init() {
+	b := make([]byte, 8)
 	rand.Read(b)
-	return hex.EncodeToString(b)
+	requestIDPrefix = hex.EncodeToString(b)
+}
+
+func generateRequestID() string {
+	n := requestIDCounter.Add(1)
+	return requestIDPrefix + strconv.FormatUint(n, 36)
 }
 
 type statusRecorder struct {
