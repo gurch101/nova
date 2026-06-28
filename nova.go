@@ -295,8 +295,8 @@ func Patch[Req, Res any](app *Application, pattern string, handler func(ctx *Con
 }
 
 func register[Req, Res any](app *Application, method, pattern string, handler func(ctx *Context, req Req) (Res, error)) {
-	// Build the decoder plan once at startup — zero reflection per request.
-	plan := buildPlan[Req]()
+	// Build the decoder and validation plans once at startup — zero reflection per request.
+	plan, vPlan := buildDecoderAndValidationPlan[Req]()
 
 	fullPattern := method + " " + pattern
 	app.mux.HandleFunc(fullPattern, func(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +314,13 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 			}
 			writeError(w, NewBadRequestProblem(err.Error()), r.Context())
 			return
+		}
+
+		if len(vPlan.rules) > 0 {
+			if err := validateRequest(&req, vPlan); err != nil {
+				writeError(w, err, r.Context())
+				return
+			}
 		}
 
 		requestID, _ := r.Context().Value(requestIDKey).(string)
