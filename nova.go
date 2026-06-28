@@ -153,14 +153,15 @@ func Recoverer(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				stack := debug.Stack()
 				requestID, _ := r.Context().Value(requestIDKey).(string)
-				attrs := []slog.Attr{
-					slog.String("request_id", requestID),
-					slog.Any("panic", rec),
-					slog.String("stack", string(stack)),
-				}
-				if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
-					attrs = append(attrs, slog.String("body", bp.String()))
-				}
+			attrs := make([]slog.Attr, 0, 4)
+			attrs = append(attrs,
+				slog.String("request_id", requestID),
+				slog.Any("panic", rec),
+				slog.String("stack", string(stack)),
+			)
+			if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
+				attrs = append(attrs, slog.String("body", bp.String()))
+			}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
 				writeError(w, ProblemDetail{
 					Type:   errorTypeInternalServerErrorURL,
@@ -298,7 +299,8 @@ func RequestLogger(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rec, r)
 
-		attrs := []slog.Attr{
+		attrs := make([]slog.Attr, 0, 8)
+		attrs = append(attrs,
 			slog.String("request_id", requestID),
 			slog.String("method", r.Method),
 			slog.String("url", r.URL.String()),
@@ -306,7 +308,7 @@ func RequestLogger(next http.Handler) http.Handler {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.String("ip", clientIP(r)),
 			slog.String("user_agent", r.UserAgent()),
-		}
+		)
 		if rec.statusCode >= http.StatusInternalServerError && buf.Len() > 0 {
 			attrs = append(attrs, slog.String("body", buf.String()))
 		}
