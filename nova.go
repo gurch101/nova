@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -343,6 +344,16 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 
 		req, err := decodeRequest[Req](r, plan)
 		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				writeError(w, ProblemDetail{
+					Type:   errorTypeBadRequestURL,
+					Title:  "Request Entity Too Large",
+					Status: http.StatusRequestEntityTooLarge,
+					Detail: fmt.Sprintf("Request body too large (max %d bytes)", maxRequestBodySize),
+				}, r.Context())
+				return
+			}
 			writeError(w, NewBadRequestProblem(err.Error()), r.Context())
 			return
 		}
