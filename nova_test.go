@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -917,6 +918,280 @@ func TestHandleFuncCustomContentTypeNotOverwritten(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
 	assert.Equal(t, `{"error":"not found"}`, string(body))
+}
+
+func TestValidateRequest(t *testing.T) {
+	type ValidateReq struct {
+		Name     string   `json:"name"     validate:"required,min=2,max=100"`
+		Age      int      `json:"age"      validate:"required,min=0,max=150"`
+		Tags     []string `json:"tags"     validate:"required,min=1,max=10"`
+		Role     string   `json:"role"     validate:"oneof=admin user viewer"`
+		Email    string   `json:"email"    validate:"required,email"`
+		Username string   `json:"username" validate:"required,alphanum"`
+		Code     string   `json:"code"     validate:"alpha"`
+	}
+	type ValidateRes struct {
+		OK bool `json:"ok"`
+	}
+
+	type NoTagsReq struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+	type NoTagsRes struct {
+		OK bool `json:"ok"`
+	}
+
+	type EmbeddedBase struct {
+		Name string `json:"name" validate:"required,min=2"`
+	}
+	type EmbeddedReq struct {
+		EmbeddedBase
+	}
+	type EmbeddedRes struct {
+		Name string `json:"name"`
+	}
+
+	app := nova.NewApplication()
+	nova.Post(app, "/validate", func(ctx *nova.Context, req ValidateReq) (ValidateRes, error) {
+		return ValidateRes{OK: true}, nil
+	})
+	nova.Get(app, "/validate-path/{id}", func(ctx *nova.Context, req struct {
+		ID int `path:"id" validate:"required,min=1"`
+	}) (ValidateRes, error) {
+		return ValidateRes{OK: true}, nil
+	})
+	nova.Get(app, "/validate-query", func(ctx *nova.Context, req struct {
+		Sort string `query:"sort" validate:"oneof=asc desc"`
+	}) (ValidateRes, error) {
+		return ValidateRes{OK: true}, nil
+	})
+	nova.Post(app, "/validate-no-tags", func(ctx *nova.Context, req NoTagsReq) (NoTagsRes, error) {
+		return NoTagsRes{OK: true}, nil
+	})
+	nova.Post(app, "/validate-embedded", func(ctx *nova.Context, req EmbeddedReq) (EmbeddedRes, error) {
+		return EmbeddedRes{Name: req.Name}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	validBody := `{"name":"alice","age":30,"tags":["a","b"],"role":"admin","email":"a@b.com","username":"alice42","code":"ABC"}`
+
+	tests := []struct {
+		name              string
+		method            string
+		url               string
+		body              string
+		wantStatus        int
+		wantCode          string
+		wantMinViolations int
+	}{
+		{
+			name:       "valid request",
+			method:     "POST",
+			url:        "/validate",
+			body:       validBody,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "missing required string",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"","age":30,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "required",
+		},
+		{
+			name:       "zero-value required int",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":0,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "required",
+		},
+		{
+			name:       "nil required slice",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":null,"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "required",
+		},
+		{
+			name:       "string below min length",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"a","age":30,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "min",
+		},
+		{
+			name:       "string above max length",
+			method:     "POST",
+			url:        "/validate",
+			body:       fmt.Sprintf(`{"name":"%s","age":30,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`, strings.Repeat("x", 101)),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "max",
+		},
+		{
+			name:       "int below min value",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":-1,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "min",
+		},
+		{
+			name:       "int above max value",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":200,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "max",
+		},
+		{
+			name:       "slice below min length",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":[],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "min",
+		},
+		{
+			name:       "slice above max length",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":["a","b","c","d","e","f","g","h","i","j","k"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "max",
+		},
+		{
+			name:       "value not in oneof set",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":["a"],"role":"superadmin","email":"a@b.com","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "oneof",
+		},
+		{
+			name:       "non-alpha characters",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice","code":"ABC123"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "alpha",
+		},
+		{
+			name:       "non-alphanum characters",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":["a"],"role":"admin","email":"a@b.com","username":"alice-user","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "alphanum",
+		},
+		{
+			name:       "invalid email",
+			method:     "POST",
+			url:        "/validate",
+			body:       `{"name":"alice","age":30,"tags":["a"],"role":"admin","email":"notanemail","username":"alice","code":"ABC"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "email",
+		},
+		{
+			name:              "multiple simultaneous violations",
+			method:            "POST",
+			url:               "/validate",
+			body:              `{"name":"","age":0,"tags":null,"role":"","email":"","username":"","code":""}`,
+			wantStatus:        http.StatusUnprocessableEntity,
+			wantCode:          "required",
+			wantMinViolations: 2,
+		},
+		{
+			name:       "struct without validate tags",
+			method:     "POST",
+			url:        "/validate-no-tags",
+			body:       `{"name":"","age":0}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "required zero int without required tag",
+			method:     "POST",
+			url:        "/validate-no-tags",
+			body:       `{"name":"hello","age":0}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "embedded struct with validate",
+			method:     "POST",
+			url:        "/validate-embedded",
+			body:       `{"name":""}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, server.URL+tt.url, strings.NewReader(tt.body))
+			assert.NoError(t, err)
+			if tt.body != "" && tt.method == "POST" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			resp, err := http.DefaultClient.Do(req)
+			assert.NoError(t, err)
+			defer resp.Body.Close()
+
+			respBody, _ := io.ReadAll(resp.Body)
+
+			assert.Equal(t, resp.StatusCode, tt.wantStatus)
+
+			if tt.wantStatus == http.StatusOK {
+				return
+			}
+
+			var pd nova.ProblemDetail
+			json.Unmarshal(respBody, &pd)
+			assert.Equal(t, pd.Status, http.StatusUnprocessableEntity)
+			assert.Equal(t, pd.Title, "Unprocessable Entity")
+
+			if tt.wantMinViolations > 0 && len(pd.Invalid) < tt.wantMinViolations {
+				t.Fatalf("expected at least %d violations, got %d: %+v", tt.wantMinViolations, len(pd.Invalid), pd.Invalid)
+			}
+			assertViolationFound(t, tt.wantCode, pd.Invalid)
+		})
+	}
+
+	t.Run("validate on path params", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/validate-path/0")
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, resp.StatusCode, http.StatusUnprocessableEntity)
+	})
+
+	t.Run("validate on query params", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/validate-query?sort=invalid")
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, resp.StatusCode, http.StatusUnprocessableEntity)
+	})
+
+	t.Run("embedded struct with valid data", func(t *testing.T) {
+		resp, err := http.Post(server.URL+"/validate-embedded", "application/json", strings.NewReader(`{"name":"alice"}`))
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, resp.StatusCode, http.StatusOK)
+	})
+}
+
+func assertViolationFound(t *testing.T, wantCode string, violations []nova.FieldViolation) {
+	t.Helper()
+	for _, v := range violations {
+		if v.Code == wantCode {
+			return
+		}
+	}
+	t.Errorf("expected violation with code %q, got %+v", wantCode, violations)
 }
 
 func TestJSONMarshalFailureReturns500(t *testing.T) {

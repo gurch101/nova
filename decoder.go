@@ -15,7 +15,9 @@ import (
 
 const maxRequestBodySize = 10 << 20 // 10 MB
 
-var errPointerEmbed = "nova: embedded pointer field %s in %s is not supported; use value embedding"
+func panicPointerEmbed(fieldName string, t reflect.Type) {
+	panic(fmt.Sprintf("nova: embedded pointer field %s in %s is not supported; use value embedding", fieldName, t))
+}
 
 type fieldInfo struct {
 	offset uintptr
@@ -29,23 +31,28 @@ type decoderPlan struct {
 	hasJSON bool
 }
 
-// buildPlan inspects the Req struct type at startup (once per route) and
-// builds a cached decoder plan.  It extracts struct field offsets so that
-// at runtime we can write to them directly via unsafe pointers instead of
-// going through reflect.Value — the reflect work happens only here.
-func buildPlan[Req any]() *decoderPlan {
+// buildDecoderAndValidationPlan inspects the Req struct type at startup
+// (once per route) and builds a cached decoder plan and validation plan.
+// It extracts struct field offsets so that at runtime we can read/write
+// them directly via unsafe pointers instead of going through reflect.Value.
+func buildDecoderAndValidationPlan[Req any]() (*decoderPlan, *validationPlan) {
 	var req Req
 	t := reflect.TypeOf(req)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
-	plan := &decoderPlan{}
-	collectFields(t, 0, plan)
-	return plan
+	dPlan := &decoderPlan{}
+	vPlan := &validationPlan{}
+	collectFields(t, 0, dPlan, vPlan)
+	return dPlan, vPlan
 }
 
-func collectFields(t reflect.Type, baseOffset uintptr, plan *decoderPlan) {
+func collectFields(t reflect.Type, baseOffset uintptr, dPlan *decoderPlan, vPlan *validationPlan) {
+	collectFieldsRecursive(t, baseOffset, "", dPlan, vPlan)
+}
+
+func collectFieldsRecursive(t reflect.Type, baseOffset uintptr, namePrefix string, dPlan *decoderPlan, vPlan *validationPlan) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		absOffset := baseOffset + f.Offset
@@ -53,34 +60,112 @@ func collectFields(t reflect.Type, baseOffset uintptr, plan *decoderPlan) {
 		if f.Anonymous {
 			ft := f.Type
 			if ft.Kind() == reflect.Ptr {
-				panic(fmt.Sprintf(errPointerEmbed, f.Name, t))
+				panicPointerEmbed(f.Name, t)
 			}
-			collectFields(ft, absOffset, plan)
+			collectFieldsRecursive(ft, absOffset, namePrefix, dPlan, vPlan)
 			continue
 		}
 
-		if tag := f.Tag.Get("path"); tag != "" {
-			plan.fields = append(plan.fields, fieldInfo{
+		pathTag := f.Tag.Get("path")
+		queryTag := f.Tag.Get("query")
+		jsonTag := f.Tag.Get("json")
+
+		name := ""
+		if jsonTag != "" {
+			n, _, _ := strings.Cut(jsonTag, ",")
+			if n != "" && n != "-" {
+				name = n
+			}
+		}
+		if name == "" && pathTag != "" {
+			name = pathTag
+		}
+		if name == "" && queryTag != "" {
+			name = queryTag
+		}
+		if name == "" {
+			name = f.Name
+		}
+
+		fullName := name
+		if namePrefix != "" {
+			fullName = namePrefix + "." + name
+		}
+
+		if pathTag != "" && dPlan != nil {
+			dPlan.fields = append(dPlan.fields, fieldInfo{
 				offset: absOffset,
 				source: "path",
-				name:   tag,
+				name:   pathTag,
 				kind:   f.Type.Kind(),
 			})
 		}
 
-		if tag := f.Tag.Get("query"); tag != "" {
-			plan.fields = append(plan.fields, fieldInfo{
+		if queryTag != "" && dPlan != nil {
+			dPlan.fields = append(dPlan.fields, fieldInfo{
 				offset: absOffset,
 				source: "query",
-				name:   tag,
+				name:   queryTag,
 				kind:   f.Type.Kind(),
 			})
 		}
 
-		if tag := f.Tag.Get("json"); tag != "" {
-			name := strings.Split(tag, ",")[0]
-			if name != "" && name != "-" {
-				plan.hasJSON = true
+		if jsonTag != "" && dPlan != nil {
+			n, _, _ := strings.Cut(jsonTag, ",")
+			if n != "" && n != "-" {
+				dPlan.hasJSON = true
+			}
+		}
+
+		if tag := f.Tag.Get("validate"); tag != "" {
+			rules := parseValidateTag(tag)
+			for i := range rules {
+				rules[i].name = fullName
+				rules[i].offset = absOffset
+				rules[i].kind = f.Type.Kind()
+				typeCheckRule(&rules[i])
+				vPlan.rules = append(vPlan.rules, rules[i])
+			}
+		}
+
+		ft := f.Type
+		isPtr := ft.Kind() == reflect.Ptr
+		if isPtr {
+			ft = ft.Elem()
+		}
+
+		switch {
+		case ft.Kind() == reflect.Struct:
+			if isPtr {
+				child := &validationPlan{}
+				collectFieldsRecursive(ft, 0, fullName, nil, child)
+				if len(child.rules) > 0 || len(child.elementPlans) > 0 || len(child.structPlans) > 0 {
+					vPlan.structPlans = append(vPlan.structPlans, structValidationPlan{
+						pointerOffset: absOffset,
+						parentName:    fullName,
+						rules:         child.rules,
+						elementPlans:  child.elementPlans,
+						structPlans:   child.structPlans,
+					})
+				}
+			} else {
+				collectFieldsRecursive(ft, absOffset, fullName, nil, vPlan)
+			}
+
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			elemType := ft.Elem()
+			child := &validationPlan{}
+			collectFieldsRecursive(elemType, 0, "", nil, child)
+			if len(child.rules) > 0 || len(child.elementPlans) > 0 || len(child.structPlans) > 0 {
+				vPlan.elementPlans = append(vPlan.elementPlans, elementValidationPlan{
+					sliceOffset:  absOffset,
+					isPtr:        isPtr,
+					parentName:   fullName,
+					elemType:     elemType,
+					rules:        child.rules,
+					elementPlans: child.elementPlans,
+					structPlans:  child.structPlans,
+				})
 			}
 		}
 	}
