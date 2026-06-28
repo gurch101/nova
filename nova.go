@@ -368,7 +368,6 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 		defer func() {
 			ctx.Request = nil
 			ctx.Response = nil
-			ctx.Payload = nil
 			ctx.RequestID = ""
 			ctx.logger = nil
 			contextPool.Put(ctx)
