@@ -3,12 +3,12 @@ package nova
 import "net/http"
 
 var (
-	errorTypePrefix                  string
-	errorTypeBadRequestURL           string
-	errorTypeNotFoundURL             string
-	errorTypeUnprocessableEntityURL  string
-	errorTypeMethodNotAllowedURL     string
-	errorTypeInternalServerErrorURL  string
+	errorTypePrefix                   string
+	errorTypeBadRequestURL            string
+	errorTypeNotFoundURL              string
+	errorTypeUnprocessableEntityURL   string
+	errorTypeMethodNotAllowedURL      string
+	errorTypeInternalServerErrorURL   string
 	errorTypeRequestEntityTooLargeURL string
 )
 

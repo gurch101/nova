@@ -115,7 +115,9 @@ func TestMixedPathQueryAndBody(t *testing.T) {
 }
 
 func TestDecodeErrorIsBadRequest(t *testing.T) {
-	type Req struct{ ID int `path:"id"` }
+	type Req struct {
+		ID int `path:"id"`
+	}
 	type Res struct{}
 
 	app := nova.NewApplication()
@@ -136,7 +138,9 @@ func TestDecodeErrorIsBadRequest(t *testing.T) {
 }
 
 func TestHandlerErrorFallsBackTo500(t *testing.T) {
-	type Req struct{ ID int `path:"id"` }
+	type Req struct {
+		ID int `path:"id"`
+	}
 	type Res struct{}
 
 	app := nova.NewApplication()
@@ -237,7 +241,9 @@ func TestHandleBadRequest(t *testing.T) {
 }
 
 func TestHandleNotFound(t *testing.T) {
-	type Req struct{ ID string `path:"id"` }
+	type Req struct {
+		ID string `path:"id"`
+	}
 	type Res struct{}
 
 	app := nova.NewApplication()
@@ -261,7 +267,9 @@ func TestHandleNotFound(t *testing.T) {
 }
 
 func TestUnprocessableEntity(t *testing.T) {
-	type Req struct{ Name string `json:"name"` }
+	type Req struct {
+		Name string `json:"name"`
+	}
 	type Res struct{}
 
 	app := nova.NewApplication()
@@ -310,7 +318,9 @@ func TestRouteNotFound(t *testing.T) {
 }
 
 func TestHandleValidationProblem(t *testing.T) {
-	type Req struct{ Name string `json:"name"` }
+	type Req struct {
+		Name string `json:"name"`
+	}
 	type Res struct{}
 
 	app := nova.NewApplication()
@@ -962,4 +972,3 @@ func TestRequestBodyTooLarge(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, pd.Status)
 	assert.True(t, strings.Contains(pd.Detail, "too large"))
 }
-

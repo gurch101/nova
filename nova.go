@@ -24,7 +24,7 @@ type contextKey string
 const (
 	requestIDKey   contextKey = "request_id"
 	bodyKey        contextKey = "request_body"
-	maxBodyCapture           = 64 * 1024
+	maxBodyCapture            = 64 * 1024
 )
 
 type bodyCapturer struct {
@@ -80,8 +80,8 @@ type envelope interface {
 }
 
 func (e Envelope[T]) envelopeMarker() {}
-func (e Envelope[T]) GetStatus() int   { return e.Status }
-func (e Envelope[T]) GetData() any     { return e.Data }
+func (e Envelope[T]) GetStatus() int  { return e.Status }
+func (e Envelope[T]) GetData() any    { return e.Data }
 
 // Empty is a sentinel value handlers return to signal 204 No Content.
 type empty struct{}
@@ -157,15 +157,15 @@ func Recoverer(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				stack := debug.Stack()
 				requestID, _ := r.Context().Value(requestIDKey).(string)
-			attrs := make([]slog.Attr, 0, 4)
-			attrs = append(attrs,
-				slog.String("request_id", requestID),
-				slog.Any("panic", rec),
-				slog.String("stack", string(stack)),
-			)
-			if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
-				attrs = append(attrs, slog.String("body", bp.String()))
-			}
+				attrs := make([]slog.Attr, 0, 4)
+				attrs = append(attrs,
+					slog.String("request_id", requestID),
+					slog.Any("panic", rec),
+					slog.String("stack", string(stack)),
+				)
+				if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
+					attrs = append(attrs, slog.String("body", bp.String()))
+				}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
 				writeError(w, ProblemDetail{
 					Type:   errorTypeInternalServerErrorURL,
@@ -449,5 +449,3 @@ func writeError(w http.ResponseWriter, err error, ctx context.Context) {
 	w.WriteHeader(pd.Status)
 	w.Write(data)
 }
-
-
