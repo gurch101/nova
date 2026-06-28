@@ -70,6 +70,9 @@ type Envelope[T any] struct {
 	Data   T
 }
 
+// envelope is an internal interface satisfied by Envelope[T]. The unexported
+// marker method prevents external types from accidentally implementing it,
+// ensuring the response-type switch in register() only matches our Envelope.
 type envelope interface {
 	envelopeMarker()
 	GetStatus() int
