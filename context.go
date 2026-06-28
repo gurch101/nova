@@ -5,10 +5,11 @@ import (
 	"net/http"
 )
 
+// Context holds per-request state including the original Request, Response,
+// and a request-scoped logger. Instances are pooled via sync.Pool in register().
 type Context struct {
 	Request   *http.Request
 	Response  http.ResponseWriter
-	Payload   any
 	RequestID string
 
 	logger *slog.Logger
