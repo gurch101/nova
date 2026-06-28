@@ -27,36 +27,20 @@ const (
 	maxBodyCapture            = 64 * 1024
 )
 
-type bodyCapturer struct {
-	io.Reader
-	body io.ReadCloser
-}
-
-func (b *bodyCapturer) Close() error { return b.body.Close() }
-
-// cappedBuffer wraps bytes.Buffer with a write limit for body capture.
-// Excess writes are silently discarded to prevent unbounded memory growth
-// from large request bodies.
-type cappedBuffer struct {
+type bodyBuf struct {
 	bytes.Buffer
-	capped bool
+	remain int
 }
 
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if b.capped {
+func (b *bodyBuf) Write(p []byte) (int, error) {
+	if b.remain <= 0 {
 		return len(p), nil
 	}
-	remaining := maxBodyCapture - b.Buffer.Len()
-	if remaining <= 0 {
-		b.capped = true
-		return len(p), nil
+	if len(p) > b.remain {
+		p = p[:b.remain]
 	}
-	if len(p) > remaining {
-		b.Buffer.Write(p[:remaining])
-		b.capped = true
-	} else {
-		b.Buffer.Write(p)
-	}
+	n, _ := b.Buffer.Write(p)
+	b.remain -= n
 	return len(p), nil
 }
 
@@ -163,7 +147,7 @@ func Recoverer(next http.Handler) http.Handler {
 					slog.Any("panic", rec),
 					slog.String("stack", string(stack)),
 				)
-				if bp, ok := r.Context().Value(bodyKey).(*cappedBuffer); ok && bp.Len() > 0 {
+				if bp, ok := r.Context().Value(bodyKey).(*bodyBuf); ok && bp.Len() > 0 {
 					attrs = append(attrs, slog.String("body", bp.String()))
 				}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
@@ -260,11 +244,15 @@ func RequestLogger(next http.Handler) http.Handler {
 		start := time.Now()
 		requestID := generateRequestID()
 
-		var buf cappedBuffer
+		var buf bodyBuf
+		buf.remain = maxBodyCapture
 		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			r.Body = &bodyCapturer{
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{
 				Reader: io.TeeReader(r.Body, &buf),
-				body:   r.Body,
+				Closer: r.Body,
 			}
 		}
 
