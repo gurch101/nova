@@ -91,15 +91,15 @@ func NewApplication() *Application {
 }
 
 func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ec := &errorCapturer{ResponseWriter: w}
-	a.handler.ServeHTTP(ec, r)
+	rr := &responseRecorder{ResponseWriter: w}
+	a.handler.ServeHTTP(rr, r)
 
 	ct := w.Header().Get("Content-Type")
 	if ct != "" && ct != "text/plain; charset=utf-8" {
 		return
 	}
 
-	switch ec.code {
+	switch rr.code {
 	case http.StatusNotFound:
 		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
 	case http.StatusMethodNotAllowed:
@@ -189,23 +189,13 @@ func generateRequestID() string {
 	return b.String()
 }
 
-type statusRecorder struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.statusCode = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-type errorCapturer struct {
+type responseRecorder struct {
 	http.ResponseWriter
 	code int
 	buf  bytes.Buffer
 }
 
-func (w *errorCapturer) WriteHeader(code int) {
+func (w *responseRecorder) WriteHeader(code int) {
 	w.code = code
 	ct := w.Header().Get("Content-Type")
 	if (code == http.StatusNotFound || code == http.StatusMethodNotAllowed) && (ct == "" || ct == "text/plain; charset=utf-8") {
@@ -214,7 +204,7 @@ func (w *errorCapturer) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *errorCapturer) Write(p []byte) (int, error) {
+func (w *responseRecorder) Write(p []byte) (int, error) {
 	if w.code == 0 {
 		w.code = http.StatusOK
 	}
@@ -259,20 +249,25 @@ func RequestLogger(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
 		r = r.WithContext(context.WithValue(r.Context(), bodyKey, &buf))
 
-		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		next.ServeHTTP(w, r)
+
+		rr := w.(*responseRecorder)
+		status := rr.code
+		if status == 0 {
+			status = http.StatusOK
+		}
 
 		attrs := make([]slog.Attr, 0, 8)
 		attrs = append(attrs,
 			slog.String("request_id", requestID),
 			slog.String("method", r.Method),
 			slog.String("url", r.URL.String()),
-			slog.Int("status", rec.statusCode),
+			slog.Int("status", status),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.String("ip", clientIP(r)),
 			slog.String("user_agent", r.UserAgent()),
 		)
-		if rec.statusCode >= http.StatusInternalServerError && buf.Len() > 0 {
+		if status >= http.StatusInternalServerError && buf.Len() > 0 {
 			attrs = append(attrs, slog.String("body", buf.String()))
 		}
 		slog.LogAttrs(r.Context(), slog.LevelInfo, "request", attrs...)
