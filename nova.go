@@ -180,7 +180,14 @@ var (
 
 func init() {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		slog.LogAttrs(context.Background(), slog.LevelError,
+			"failed to generate random request ID prefix, falling back to timestamp",
+			slog.Any("error", err),
+		)
+		requestIDPrefix = strconv.FormatInt(time.Now().UnixNano(), 36)
+		return
+	}
 	requestIDPrefix = hex.EncodeToString(b)
 }
 
