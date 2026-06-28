@@ -2,6 +2,7 @@ package nova
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"unsafe"
 )
+
+const maxRequestBodySize = 10 << 20 // 10 MB
 
 var errPointerEmbed = "nova: embedded pointer field %s in %s is not supported; use value embedding"
 
@@ -88,9 +91,14 @@ func collectFields(t reflect.Type, baseOffset uintptr, plan *decoderPlan) {
 // then path/query values are written directly through pre-computed unsafe offsets.
 func decodeRequest[Req any](r *http.Request, plan *decoderPlan) (req Req, err error) {
 	if plan.hasJSON && r.Body != nil {
-		switch err := json.NewDecoder(r.Body).Decode(&req); err {
+		limited := http.MaxBytesReader(nil, r.Body, maxRequestBodySize)
+		switch err := json.NewDecoder(limited).Decode(&req); err {
 		case nil, io.EOF:
 		default:
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				return req, fmt.Errorf("request body too large (max %d bytes): %w", maxRequestBodySize, maxErr)
+			}
 			return req, fmt.Errorf("decoding json body: %w", err)
 		}
 	}
