@@ -75,3 +75,24 @@ func TestValidatorCheckPasses(t *testing.T) {
 	err := v.ErrorOrNil()
 	assert.Nil(t, err)
 }
+
+func TestSetErrorTypePrefix(t *testing.T) {
+	nova.SetErrorTypePrefix("https://api.example.com/errors")
+
+	pd := nova.NewBadRequestProblem("bad input")
+	assert.Equal(t, pd.Type, "https://api.example.com/errors/bad-request")
+
+	pd2 := nova.NewNotFoundProblem("missing", "/items/1")
+	assert.Equal(t, pd2.Type, "https://api.example.com/errors/not-found")
+
+	pd3 := nova.NewUnprocessableEntityProblem("invalid")
+	assert.Equal(t, pd3.Type, "https://api.example.com/errors/unprocessable-entity")
+
+	pd4 := nova.NewMethodNotAllowedProblem("nope")
+	assert.Equal(t, pd4.Type, "https://api.example.com/errors/method-not-allowed")
+
+	sin := nova.NewSingleFieldProblem("name", "required", "required")
+	assert.Equal(t, sin.(nova.ProblemDetail).Type, "https://api.example.com/errors/unprocessable-entity")
+
+	nova.SetErrorTypePrefix("https://api.yourdomain.com/errors")
+}
