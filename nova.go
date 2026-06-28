@@ -379,11 +379,17 @@ func writeJSON(w http.ResponseWriter, status int, v any, ctx context.Context) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		requestID, _ := ctx.Value(requestIDKey).(string)
-		slog.LogAttrs(ctx, slog.LevelWarn, "failed to encode response",
+		slog.LogAttrs(ctx, slog.LevelError, "failed to encode response",
 			slog.String("request_id", requestID),
 			slog.Any("error", err),
 		)
-		data = []byte("null")
+		writeError(w, ProblemDetail{
+			Type:   errorTypeInternalServerErrorURL,
+			Title:  "Internal Server Error",
+			Status: http.StatusInternalServerError,
+			Detail: "An unexpected error occurred while encoding the response",
+		}, ctx)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
