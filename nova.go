@@ -215,38 +215,16 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// errorCapturer buffers the response body only when the status code is 404
-// or 405 and Content-Type is empty or the mux's default text/plain,
-// allowing ServeHTTP to replace mux-generated text error responses
-// with RFC 9457 ProblemDetail JSON without buffering successful responses.
 type errorCapturer struct {
 	http.ResponseWriter
-	code    int
-	buf     bytes.Buffer
-	handled bool // set true when a typed route handler starts execution
-}
-
-// markHandlerCapturer traverses known ResponseWriter wrappers to find and
-// mark the errorCapturer, indicating that a registered route handler is
-// executing so that intentional 404/405 responses are not replaced.
-func markHandlerCapturer(w http.ResponseWriter) {
-	for {
-		if ec, ok := w.(*errorCapturer); ok {
-			ec.handled = true
-			return
-		}
-		switch v := w.(type) {
-		case *statusRecorder:
-			w = v.ResponseWriter
-		default:
-			return
-		}
-	}
+	code int
+	buf  bytes.Buffer
 }
 
 func (w *errorCapturer) WriteHeader(code int) {
 	w.code = code
-	if w.isMuxError() {
+	ct := w.Header().Get("Content-Type")
+	if (code == http.StatusNotFound || code == http.StatusMethodNotAllowed) && (ct == "" || ct == "text/plain; charset=utf-8") {
 		return
 	}
 	w.ResponseWriter.WriteHeader(code)
@@ -256,18 +234,11 @@ func (w *errorCapturer) Write(p []byte) (int, error) {
 	if w.code == 0 {
 		w.code = http.StatusOK
 	}
-	if w.isMuxError() {
+	ct := w.Header().Get("Content-Type")
+	if (w.code == http.StatusNotFound || w.code == http.StatusMethodNotAllowed) && (ct == "" || ct == "text/plain; charset=utf-8") {
 		return w.buf.Write(p)
 	}
 	return w.ResponseWriter.Write(p)
-}
-
-func (w *errorCapturer) isMuxError() bool {
-	if w.handled || (w.code != http.StatusNotFound && w.code != http.StatusMethodNotAllowed) {
-		return false
-	}
-	ct := w.Header().Get("Content-Type")
-	return ct == "" || ct == "text/plain; charset=utf-8"
 }
 
 func clientIP(r *http.Request) string {
@@ -346,8 +317,6 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 
 	fullPattern := method + " " + pattern
 	app.mux.HandleFunc(fullPattern, func(w http.ResponseWriter, r *http.Request) {
-		markHandlerCapturer(w)
-
 		req, err := decodeRequest[Req](r, plan)
 		if err != nil {
 			var maxErr *http.MaxBytesError
