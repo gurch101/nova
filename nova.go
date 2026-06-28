@@ -163,7 +163,7 @@ func Recoverer(next http.Handler) http.Handler {
 				}
 				slog.LogAttrs(r.Context(), slog.LevelError, "panic recovered", attrs...)
 				writeError(w, ProblemDetail{
-					Type:   ErrorTypeURLPrefix + "/internal-server-error",
+					Type:   errorTypeInternalServerErrorURL,
 					Title:  "Internal Server Error",
 					Status: http.StatusInternalServerError,
 					Detail: "An unexpected error occurred",
@@ -347,7 +347,7 @@ func register[Req, Res any](app *Application, method, pattern string, handler fu
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
 				writeError(w, ProblemDetail{
-					Type:   errorTypeBadRequestURL,
+					Type:   errorTypeRequestEntityTooLargeURL,
 					Title:  "Request Entity Too Large",
 					Status: http.StatusRequestEntityTooLarge,
 					Detail: fmt.Sprintf("Request body too large (max %d bytes)", maxRequestBodySize),
@@ -425,7 +425,7 @@ func writeError(w http.ResponseWriter, err error, ctx context.Context) {
 			slog.Any("error", err),
 		)
 		pd = ProblemDetail{
-			Type:   ErrorTypeURLPrefix + "/internal-server-error",
+			Type:   errorTypeInternalServerErrorURL,
 			Title:  "Internal Server Error",
 			Status: http.StatusInternalServerError,
 			Detail: "An unexpected error occurred",
