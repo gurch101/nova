@@ -108,13 +108,14 @@ func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.handler.ServeHTTP(ec, r)
 
 	ct := w.Header().Get("Content-Type")
-	isMuxText := ct == "" || ct == "text/plain; charset=utf-8"
-
-	if ec.code == http.StatusNotFound && isMuxText {
-		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
+	if ct != "" && ct != "text/plain; charset=utf-8" {
 		return
 	}
-	if ec.code == http.StatusMethodNotAllowed && isMuxText {
+
+	switch ec.code {
+	case http.StatusNotFound:
+		writeError(w, NewNotFoundProblem("route not found", r.URL.String()), r.Context())
+	case http.StatusMethodNotAllowed:
 		pd := NewMethodNotAllowedProblem("The requested HTTP method is not supported for this endpoint")
 		if allow := w.Header().Get("Allow"); allow != "" {
 			w.Header().Set("Allow", allow)
