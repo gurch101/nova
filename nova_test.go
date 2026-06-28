@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gurch101/nova"
@@ -656,5 +657,309 @@ func TestHandleMethodNotAllowed(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, resp.StatusCode, http.StatusMethodNotAllowed)
+}
+
+// --- Edge-case tests --------------------------------------------------------
+
+func TestAllHTTPMethods(t *testing.T) {
+	type Req struct {
+		ID int `path:"id"`
+	}
+	type Res struct {
+		Method string `json:"method"`
+	}
+
+	tests := []struct {
+		name   string
+		method string
+		setup  func(*nova.Application)
+	}{
+		{"GET", "GET",
+			func(app *nova.Application) {
+				nova.Get(app, "/methods/{id}", func(ctx *nova.Context, req Req) (Res, error) { return Res{Method: "GET"}, nil })
+			}},
+		{"POST", "POST",
+			func(app *nova.Application) {
+				nova.Post(app, "/methods/{id}", func(ctx *nova.Context, req Req) (Res, error) { return Res{Method: "POST"}, nil })
+			}},
+		{"PUT", "PUT",
+			func(app *nova.Application) {
+				nova.Put(app, "/methods/{id}", func(ctx *nova.Context, req Req) (Res, error) { return Res{Method: "PUT"}, nil })
+			}},
+		{"DELETE", "DELETE",
+			func(app *nova.Application) {
+				nova.Delete(app, "/methods/{id}", func(ctx *nova.Context, req Req) (Res, error) { return Res{Method: "DELETE"}, nil })
+			}},
+		{"PATCH", "PATCH",
+			func(app *nova.Application) {
+				nova.Patch(app, "/methods/{id}", func(ctx *nova.Context, req Req) (Res, error) { return Res{Method: "PATCH"}, nil })
+			}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := nova.NewApplication()
+			tt.setup(app)
+			server := httptest.NewServer(app)
+			defer server.Close()
+
+			req, err := http.NewRequest(tt.method, server.URL+"/methods/1", nil)
+			assert.NoError(t, err)
+			resp, err := http.DefaultClient.Do(req)
+			assert.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var res Res
+			assert.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+			assert.Equal(t, tt.method, res.Method)
+		})
+	}
+}
+
+func TestEmptyBodyPost(t *testing.T) {
+	type Req struct {
+		Name string `json:"name"`
+	}
+	type Res struct {
+		Received bool `json:"received"`
+	}
+
+	app := nova.NewApplication()
+	nova.Post(app, "/empty", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{Received: req.Name == ""}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/empty", "application/json", nil)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var res Res
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+	assert.True(t, res.Received)
+}
+
+func TestExtraJSONFieldsAreIgnored(t *testing.T) {
+	type Req struct {
+		Name string `json:"name"`
+	}
+	type Res struct {
+		Name string `json:"name"`
+	}
+
+	app := nova.NewApplication()
+	nova.Post(app, "/extra", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{Name: req.Name}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	body := strings.NewReader(`{"name":"alice","extra":"ignored","unknown":99}`)
+	resp, err := http.Post(server.URL+"/extra", "application/json", body)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	var res Res
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+	assert.Equal(t, "alice", res.Name)
+}
+
+func TestRequestIDIsUniqueConcurrently(t *testing.T) {
+	type Req struct{}
+	type Res struct {
+		RequestID string `json:"requestId"`
+	}
+
+	app := nova.NewApplication()
+	nova.Get(app, "/rid", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{RequestID: ctx.RequestID}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	const goroutines = 50
+	var mu sync.Mutex
+	ids := make(map[string]struct{}, goroutines)
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			resp, err := http.Get(server.URL + "/rid")
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+			var body struct{ RequestID string }
+			json.NewDecoder(resp.Body).Decode(&body)
+			mu.Lock()
+			ids[body.RequestID] = struct{}{}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, len(ids), goroutines)
+}
+
+func TestDeeplyNestedEmbeddedStruct(t *testing.T) {
+	type Base struct {
+		ID int `path:"id"`
+	}
+	type Middle struct {
+		Base
+		Sort string `query:"sort"`
+	}
+	type NestedRequest struct {
+		Middle
+		Name string `json:"name"`
+	}
+	type NestedResponse struct {
+		ID   int    `json:"id"`
+		Sort string `json:"sort"`
+		Name string `json:"name"`
+	}
+
+	app := nova.NewApplication()
+	nova.Put(app, "/nested/{id}", func(ctx *nova.Context, req NestedRequest) (NestedResponse, error) {
+		return NestedResponse{ID: req.ID, Sort: req.Sort, Name: req.Name}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	body := `{"name":"deep"}`
+	req, _ := http.NewRequest("PUT", server.URL+"/nested/7?sort=asc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result NestedResponse
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, 7, result.ID)
+	assert.Equal(t, "asc", result.Sort)
+	assert.Equal(t, "deep", result.Name)
+}
+
+func TestMissingOptionalQueryParamDefaultsToZero(t *testing.T) {
+	type Req struct {
+		ID     int    `path:"id"`
+		SortBy string `query:"sort"`
+		Page   int    `query:"page"`
+	}
+	type Res struct {
+		ID     int    `json:"id"`
+		SortBy string `json:"sortBy"`
+		Page   int    `json:"page"`
+	}
+
+	app := nova.NewApplication()
+	nova.Get(app, "/items/{id}", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{ID: req.ID, SortBy: req.SortBy, Page: req.Page}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/items/42?sort=name")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var res Res
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+	assert.Equal(t, 42, res.ID)
+	assert.Equal(t, "name", res.SortBy)
+	assert.Equal(t, 0, res.Page)
+}
+
+func TestHandleFuncCustomContentTypeNotOverwritten(t *testing.T) {
+	app := nova.NewApplication()
+	app.Handle("GET", "/custom-404", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.api+json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
+	}))
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/custom-404")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "application/vnd.api+json", resp.Header.Get("Content-Type"))
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+	assert.Equal(t, `{"error":"not found"}`, string(body))
+}
+
+func TestJSONMarshalFailureReturns500(t *testing.T) {
+	type BadMarshalResponse struct {
+		Fn func()
+	}
+	type Req struct{}
+
+	app := nova.NewApplication()
+	nova.Get(app, "/bad-marshal", func(ctx *nova.Context, req Req) (BadMarshalResponse, error) {
+		return BadMarshalResponse{}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/bad-marshal")
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
+
+	var pd nova.ProblemDetail
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&pd))
+	assert.Equal(t, http.StatusInternalServerError, pd.Status)
+	assert.Equal(t, "Internal Server Error", pd.Title)
+}
+
+func TestRequestBodyTooLarge(t *testing.T) {
+	type Req struct {
+		Data string `json:"data"`
+	}
+	type Res struct{}
+
+	app := nova.NewApplication()
+	nova.Post(app, "/large", func(ctx *nova.Context, req Req) (Res, error) {
+		return Res{}, nil
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	body := strings.NewReader(`{"data":"` + strings.Repeat("x", 11<<20) + `"}`)
+	resp, err := http.Post(server.URL+"/large", "application/json", body)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	var pd nova.ProblemDetail
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&pd))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, pd.Status)
+	assert.True(t, strings.Contains(pd.Detail, "too large"))
 }
 
